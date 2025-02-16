@@ -1,0 +1,7 @@
+ssh.sh
+.idea
+.venv
+.DS_Store
+*.pyc
+uv.lock
+
