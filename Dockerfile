@@ -16,9 +16,6 @@ RUN apt-get autoclean -y && apt-get autoremove -y && rm -rf /var/lib/{apt,dpkg,c
 
 RUN uv sync --compile-bytecode
 
-# Package FESS2022 Pacific Tidal Model In Build Process
-RUN uv run python -c "from util import *; setup_tidal_models()"
-
 #CMD ["uv", "run", "run.py"]
 
 
