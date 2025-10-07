@@ -16,6 +16,6 @@ RUN apt-get autoclean -y && apt-get autoremove -y && rm -rf /var/lib/{apt,dpkg,c
 
 RUN uv sync --compile-bytecode
 
-#CMD ["uv", "run", "run_old.py"]
+#CMD ["uv", "run", "run.py"]
 
 

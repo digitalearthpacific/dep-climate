@@ -6,6 +6,7 @@ import odc.geo.xr  # noqa: F401
 import typer
 from dea_tools.dask import create_local_dask_cluster
 from dep_tools import grids
+
 # from dask.distributed import Client
 from dep_tools.aws import write_stac_s3
 from dep_tools.namers import S3ItemPath
@@ -31,14 +32,14 @@ tc_folder = "/Users/sachin/Documents/TerraClimate/"
 
 # Main
 def main(
-        country_code: Annotated[str, typer.Option()],
-        output_bucket: str = "dep-public-staging",
-        dataset_id: str = "climate",
-        base_product: str = "ls",
-        version: str = "1.0.0",
-        memory_limit: str = "64GB",
-        workers: int = 4,
-        threads_per_worker: int = 32,
+    country_code: Annotated[str, typer.Option()],
+    output_bucket: str = "dep-public-staging",
+    dataset_id: str = "climate",
+    base_product: str = "ls",
+    version: str = "1.0.0",
+    memory_limit: str = "64GB",
+    workers: int = 4,
+    threads_per_worker: int = 32,
 ) -> None:
     log = get_logger(country_code)
     log.info("Starting processing...")
@@ -59,12 +60,14 @@ def main(
     configure_s3_access(cloud_defaults=True, requester_pays=True)
 
     # load model
-    data = xr.open_mfdataset(tc_folder + "*.nc", parallel=False, engine="h5netcdf", decode_coords="all")
+    data = xr.open_mfdataset(
+        tc_folder + "*.nc", parallel=False, engine="h5netcdf", decode_coords="all"
+    )
     data = data.rio.write_crs("EPSG:4326")
 
     # netcdf cleanup
     data = data.drop_attrs(deep=True)
-    data = data.rename({'lon': 'longitude', 'lat': 'latitude'})
+    data = data.rename({"lon": "longitude", "lat": "latitude"})
     data.rio.write_crs("EPSG:4326", inplace=True)  # PACIFIC_EPSG
     # data.rio.reproject("EPSG:4326", inplace=True)
 
@@ -87,7 +90,7 @@ def main(
         )
 
         # Add Average Temperature Variable
-        data['tavg'] = (data['tmax'] + data['tmin']) / 2
+        data["tavg"] = (data["tmax"] + data["tmin"]) / 2
 
         data = data.compute()
         # print(data)
@@ -116,15 +119,15 @@ def main(
 
 
 def publish(
-        ds,
-        ds_source,
-        base_product,
-        dataset_id,
-        log,
-        output_bucket,
-        tile_id,
-        version,
-        datetime,
+    ds,
+    ds_source,
+    base_product,
+    dataset_id,
+    log,
+    output_bucket,
+    tile_id,
+    version,
+    datetime,
 ):
     aws_client = boto3.client("s3")
     # itempath
@@ -148,9 +151,7 @@ def publish(
         client=aws_client,
     )
     paths = writer.write(output_data, tile_id) + [stac_document]
-    stac_creator = StacCreator(
-        itempath=itempath, with_raster=True
-    )
+    stac_creator = StacCreator(itempath=itempath, with_raster=True)
     stac_item = stac_creator.process(output_data, tile_id)
     write_stac_s3(stac_item, stac_document, output_bucket)
     if paths is not None:

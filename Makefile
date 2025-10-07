@@ -10,7 +10,7 @@ build:
 
 docker:
 	docker build -t climate .
-	docker run -it --rm climate uv run run.py --tile-id 50,41 --year 2024 --version 0.0.1
+	docker run -it --rm climate uv run run.py --country-code NIU
 
 fmt:
 	black src/
