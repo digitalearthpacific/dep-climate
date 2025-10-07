@@ -119,7 +119,7 @@ spec:
             memory: 360Gi
         command: [ "uv", "run" ]
         args:
-          - run.py
+          - run_old.py
           - --tile-id
           - "{{ inputs.parameters.tile-id }}"
           - --year

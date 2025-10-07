@@ -5,15 +5,15 @@ import boto3
 import odc.geo.xr  # noqa: F401
 import typer
 from dea_tools.dask import create_local_dask_cluster
-
+from dep_tools import grids
 # from dask.distributed import Client
 from dep_tools.aws import write_stac_s3
-import dep_tools.grids as pgrid
 from dep_tools.namers import S3ItemPath
 from dep_tools.stac_utils import StacCreator, set_stac_properties
 from dep_tools.writers import (
     AwsDsCogWriter,
 )
+from dep_tools.grids import get_tiles, PACIFIC_EPSG, PACIFIC_GRID_30
 from geopandas import GeoDataFrame
 
 from odc.stac import configure_s3_access
@@ -24,10 +24,9 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
+# uv run src/run.py --country-code NRU
 
-# NIU uv run src/run.py --tile-id 77,19 --year 2024 --version 0.0.1
-# NRU uv run src/run.py --tile-id 50,41 --year 2024 --version 0.0.1
-# FJI_Coral_Coast uv run src/run.py --tile-id 84,63 --year 2024 --version 0.0.1
+tc_folder = "/Users/sachin/Documents/TerraClimate/"
 
 
 # Main
@@ -41,15 +40,13 @@ def main(
         workers: int = 4,
         threads_per_worker: int = 32,
 ) -> None:
-    tc_folder = "/Users/sachin/Documents/TerraClimate/"
-
     log = get_logger(country_code)
     log.info("Starting processing...")
 
     xr.set_options(keep_attrs=False)
 
     # dask and aws
-    client = create_local_dask_cluster(return_client=True)
+    client = create_local_dask_cluster(display_client=False, return_client=True)
     """
     client = DaskClient(
         n_workers=workers,
@@ -61,52 +58,61 @@ def main(
 
     configure_s3_access(cloud_defaults=True, requester_pays=True)
 
-    # get aoi
-    grid = pgrid.gadm()
-    aoi = grid[grid["GID_0"] == country_code]
-
-    # buffer
-    aoi = aoi['geometry'].buffer(0.02)
-    log.info(f"{country_code}")
-
-    # generate product
+    # load model
     data = xr.open_mfdataset(tc_folder + "*.nc", parallel=False, engine="h5netcdf", decode_coords="all")
     data = data.rio.write_crs("EPSG:4326")
-    data = data.rio.clip(aoi.geometry, aoi.crs, drop=True)
 
-    # Add Average Temperature Variable
-    data['tavg'] = (data['tmax'] + data['tmin']) / 2
-
-    # coastline clip
-    data = get_clipped(data, grid[grid["GID_0"] == country_code])
-
-    # write locally
+    # netcdf cleanup
     data = data.drop_attrs(deep=True)
-    data = data.rio.write_crs("EPSG:4326")
-    #data = data.compute()
-    # print(data)
+    data = data.rename({'lon': 'longitude', 'lat': 'latitude'})
+    data.rio.write_crs("EPSG:4326", inplace=True)  # PACIFIC_EPSG
+    # data.rio.reproject("EPSG:4326", inplace=True)
 
-    # publish
-    index = 0
-    for t in data.time.to_numpy():
-        ds_source = data.isel(time=index).squeeze()
-        datetime = np.datetime_as_string(t, unit="D")
-        publish(
-            ds_source,
-            ds_source,
-            base_product,
-            dataset_id,
-            log,
-            output_bucket,
-            country_code,
-            version,
-            datetime,
+    # get country tiles
+    tiles = get_tiles(country_codes=[country_code])
+    tiles = list(tiles)
+
+    # tile-based processing
+    for tile in tiles:
+        tile_id = ",".join([str(i) for i in tile[0]])
+        print(f"Processing {country_code} : {tile_id}...")
+
+        # clip
+        grid = grids.PACIFIC_GRID_30
+        tile_index = tuple(int(i) for i in tile_id.split(","))
+        aoi = grid.tile_geobox(tile_index)
+        aoi = aoi.to_crs(4326)
+        data = odc.geo.xr.crop(
+            data, aoi.geographic_extent, apply_mask=True, all_touched=True
         )
-        index = index + 1
 
-    # finish
-    log.info(f"{country_code} Processed.")
-    client.close()
+        # Add Average Temperature Variable
+        data['tavg'] = (data['tmax'] + data['tmin']) / 2
+
+        data = data.compute()
+        # print(data)
+
+        # publish
+        index = 0
+        for t in data.time.to_numpy():
+            ds_source = data.isel(time=index).squeeze()
+            datetime = np.datetime_as_string(t, unit="D")
+            publish(
+                ds_source,
+                ds_source,
+                base_product,
+                dataset_id,
+                log,
+                output_bucket,
+                tile_id,  # country_code,
+                version,
+                datetime,
+            )
+            index = index + 1
+
+        # finish
+        log.info(f"{country_code} Processed.")
+        client.close()
 
 
 def publish(
@@ -116,7 +122,7 @@ def publish(
         dataset_id,
         log,
         output_bucket,
-        country_code,
+        tile_id,
         version,
         datetime,
 ):
@@ -130,7 +136,7 @@ def publish(
         time=datetime,
         prefix="dep",
     )
-    stac_document = itempath.stac_path(country_code)
+    stac_document = itempath.stac_path(tile_id)
     # write externally
     output_data = set_stac_properties(ds_source, ds)
     writer = AwsDsCogWriter(
@@ -141,11 +147,11 @@ def publish(
         write_multithreaded=True,
         client=aws_client,
     )
-    paths = writer.write(output_data, country_code) + [stac_document]
+    paths = writer.write(output_data, tile_id) + [stac_document]
     stac_creator = StacCreator(
-        itempath=itempath, remote=True, make_hrefs_https=True, with_raster=True
+        itempath=itempath, with_raster=True
     )
-    stac_item = stac_creator.process(output_data, country_code)
+    stac_item = stac_creator.process(output_data, tile_id)
     write_stac_s3(stac_item, stac_document, output_bucket)
     if paths is not None:
         log.info(f"Completed writing to {paths[-1]}")
@@ -173,7 +179,7 @@ def get_logger(region_code: str) -> Logger:
             datefmt=time_format,
         )
     )
-    log = getLogger("FRACTIONAL_COVER")
+    log = getLogger("PACIFIC_CLIMATE")
     log.addHandler(console)
     log.setLevel(INFO)
     return log

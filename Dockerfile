@@ -1,6 +1,6 @@
 
 ARG BUILDPLATFORM="linux/amd64"
-FROM --platform=${BUILDPLATFORM} ghcr.io/astral-sh/uv:python3.11-bookworm-slim
+FROM --platform=${BUILDPLATFORM} ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
 ENV USE_PYGEOS=0
 
@@ -16,6 +16,6 @@ RUN apt-get autoclean -y && apt-get autoremove -y && rm -rf /var/lib/{apt,dpkg,c
 
 RUN uv sync --compile-bytecode
 
-#CMD ["uv", "run", "run.py"]
+#CMD ["uv", "run", "run_old.py"]
 
 
